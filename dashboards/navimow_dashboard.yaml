@@ -1,0 +1,37 @@
+# YAML-mode dashboard. Registered in configuration.yaml under
+# lovelace: dashboards: navimow-cut-height (filename: navimow_dashboard.yaml).
+# Deep-link path: /navimow-cut-height/cut-height
+title: Navimow
+views:
+  - title: Cut height
+    path: cut-height
+    icon: mdi:robot-mower
+    cards:
+      - type: entities
+        title: Navimow cut height
+        entities:
+          - entity: sensor.navimow_recommended_height
+            name: Recommended
+            secondary_info: last-changed
+          - type: attribute
+            entity: sensor.navimow_recommended_height
+            attribute: reason
+            name: Reason
+          - type: attribute
+            entity: sensor.navimow_recommended_height
+            attribute: direction
+            name: Direction
+          - entity: input_number.navimow_current_height
+            name: Current (tracked)
+          - entity: input_number.navimow_target_height
+            name: Target
+          - entity: input_number.navimow_protective_height
+            name: Protective
+          - entity: binary_sensor.navimow_action_needed
+            name: Action needed
+          - entity: input_button.navimow_mark_applied
+            name: Mark applied (after setting it in the Navimow app)
+          - entity: input_button.navimow_snooze_3h
+            name: Snooze 3 hours
+          - entity: input_button.navimow_snooze_2d
+            name: Snooze 2 days

@@ -1,0 +1,335 @@
+# Navimow weather-aware cut height (decision-only).
+# IMPORTANT: change weather.home to your own daily-forecast weather entity,
+# and the notify service to your phone (Settings > Helpers after first load).
+input_number:
+  navimow_target_height:
+    name: Navimow target height
+    min: 20
+    max: 95
+    step: 5
+    unit_of_measurement: mm
+    icon: mdi:target
+  navimow_protective_height:
+    name: Navimow protective height
+    min: 20
+    max: 95
+    step: 5
+    unit_of_measurement: mm
+    icon: mdi:weather-sunny-alert
+  navimow_current_height:
+    name: Navimow current height
+    min: 20
+    max: 95
+    step: 5
+    unit_of_measurement: mm
+    icon: mdi:arrow-collapse-vertical
+  navimow_heat_temp_c:
+    name: Navimow heat stress temperature
+    min: 18
+    max: 35
+    step: 1
+    unit_of_measurement: "°C"
+  navimow_dry_mm:
+    name: Navimow dry-day precipitation threshold
+    min: 0
+    max: 5
+    step: 0.5
+    unit_of_measurement: mm
+  navimow_cool_temp_c:
+    name: Navimow cool-day temperature
+    min: 10
+    max: 30
+    step: 1
+    unit_of_measurement: "°C"
+  navimow_wet_mm:
+    name: Navimow wet-day precipitation threshold
+    min: 0
+    max: 10
+    step: 0.5
+    unit_of_measurement: mm
+  navimow_window_days:
+    name: Navimow forecast window
+    min: 1
+    max: 6
+    step: 1
+    unit_of_measurement: d
+  navimow_cycle_days:
+    name: Navimow mow cycle length
+    min: 0.5
+    max: 5
+    step: 0.5
+    unit_of_measurement: d
+  navimow_coverage_cycles:
+    name: Navimow coverage cycles
+    min: 1
+    max: 4
+    step: 1
+  navimow_recovery_buffer_days:
+    name: Navimow recovery buffer
+    min: 0
+    max: 7
+    step: 1
+    unit_of_measurement: d
+  navimow_height_step_mm:
+    name: Navimow height step
+    min: 1
+    max: 10
+    step: 1
+    unit_of_measurement: mm
+
+input_datetime:
+  navimow_last_height_change:
+    name: Navimow last height change
+    has_date: true
+    has_time: true
+  navimow_snooze_until:
+    name: Navimow reminder snooze until
+    has_date: true
+    has_time: true
+    initial: "2020-01-01 00:00:00"
+
+input_text:
+  navimow_notify_service:
+    name: Navimow notify service
+    max: 60
+    initial: notify.mobile_app_your_phone
+
+input_button:
+  navimow_mark_applied:
+    name: Navimow mark height applied
+    icon: mdi:check-bold
+  navimow_snooze_3h:
+    name: Navimow snooze 3 hours
+    icon: mdi:alarm-snooze
+  navimow_snooze_2d:
+    name: Navimow snooze 2 days
+    icon: mdi:alarm-snooze
+
+template:
+  - trigger:
+      - platform: homeassistant
+        event: start
+      - platform: time_pattern
+        hours: "/12"
+      - platform: state
+        entity_id:
+          - weather.home
+          - input_number.navimow_current_height
+          - input_number.navimow_target_height
+          - input_number.navimow_protective_height
+          - input_datetime.navimow_last_height_change
+    action:
+      - service: weather.get_forecasts
+        data:
+          type: daily
+        target:
+          entity_id: weather.home
+        response_variable: fc
+    sensor:
+      - name: Navimow recommended height
+        unique_id: navimow_recommended_height
+        unit_of_measurement: mm
+        icon: mdi:fine-print
+        state: >
+          {% from 'navimow.jinja' import recommend_json %}
+          {% set forecast = fc['weather.home'].forecast if fc is defined and 'weather.home' in fc else [] %}
+          {{ (recommend_json(
+              states('input_number.navimow_current_height') | int,
+              states('input_number.navimow_target_height') | int,
+              states('input_number.navimow_protective_height') | int,
+              forecast, now().isoformat(),
+              states('input_datetime.navimow_last_height_change'),
+              states('input_number.navimow_heat_temp_c') | float,
+              states('input_number.navimow_dry_mm') | float,
+              states('input_number.navimow_cool_temp_c') | float,
+              states('input_number.navimow_wet_mm') | float,
+              states('input_number.navimow_window_days') | int,
+              states('input_number.navimow_cycle_days') | float,
+              states('input_number.navimow_coverage_cycles') | int,
+              states('input_number.navimow_recovery_buffer_days') | int,
+              states('input_number.navimow_height_step_mm') | int) | from_json).height }}
+        attributes:
+          reason: >
+            {% from 'navimow.jinja' import recommend_json %}
+            {% set forecast = fc['weather.home'].forecast if fc is defined and 'weather.home' in fc else [] %}
+            {{ (recommend_json(
+                states('input_number.navimow_current_height') | int,
+                states('input_number.navimow_target_height') | int,
+                states('input_number.navimow_protective_height') | int,
+                forecast, now().isoformat(),
+                states('input_datetime.navimow_last_height_change'),
+                states('input_number.navimow_heat_temp_c') | float,
+                states('input_number.navimow_dry_mm') | float,
+                states('input_number.navimow_cool_temp_c') | float,
+                states('input_number.navimow_wet_mm') | float,
+                states('input_number.navimow_window_days') | int,
+                states('input_number.navimow_cycle_days') | float,
+                states('input_number.navimow_coverage_cycles') | int,
+                states('input_number.navimow_recovery_buffer_days') | int,
+                states('input_number.navimow_height_step_mm') | int) | from_json).reason }}
+          direction: >
+            {% from 'navimow.jinja' import recommend_json %}
+            {% set forecast = fc['weather.home'].forecast if fc is defined and 'weather.home' in fc else [] %}
+            {{ (recommend_json(
+                states('input_number.navimow_current_height') | int,
+                states('input_number.navimow_target_height') | int,
+                states('input_number.navimow_protective_height') | int,
+                forecast, now().isoformat(),
+                states('input_datetime.navimow_last_height_change'),
+                states('input_number.navimow_heat_temp_c') | float,
+                states('input_number.navimow_dry_mm') | float,
+                states('input_number.navimow_cool_temp_c') | float,
+                states('input_number.navimow_wet_mm') | float,
+                states('input_number.navimow_window_days') | int,
+                states('input_number.navimow_cycle_days') | float,
+                states('input_number.navimow_coverage_cycles') | int,
+                states('input_number.navimow_recovery_buffer_days') | int,
+                states('input_number.navimow_height_step_mm') | int) | from_json).direction }}
+          stress_days: >
+            {% from 'navimow.jinja' import recommend_json %}
+            {% set forecast = fc['weather.home'].forecast if fc is defined and 'weather.home' in fc else [] %}
+            {{ (recommend_json(
+                states('input_number.navimow_current_height') | int,
+                states('input_number.navimow_target_height') | int,
+                states('input_number.navimow_protective_height') | int,
+                forecast, now().isoformat(),
+                states('input_datetime.navimow_last_height_change'),
+                states('input_number.navimow_heat_temp_c') | float,
+                states('input_number.navimow_dry_mm') | float,
+                states('input_number.navimow_cool_temp_c') | float,
+                states('input_number.navimow_wet_mm') | float,
+                states('input_number.navimow_window_days') | int,
+                states('input_number.navimow_cycle_days') | float,
+                states('input_number.navimow_coverage_cycles') | int,
+                states('input_number.navimow_recovery_buffer_days') | int,
+                states('input_number.navimow_height_step_mm') | int) | from_json).stress_days }}
+          can_act: >
+            {% from 'navimow.jinja' import recommend_json %}
+            {% set forecast = fc['weather.home'].forecast if fc is defined and 'weather.home' in fc else [] %}
+            {{ (recommend_json(
+                states('input_number.navimow_current_height') | int,
+                states('input_number.navimow_target_height') | int,
+                states('input_number.navimow_protective_height') | int,
+                forecast, now().isoformat(),
+                states('input_datetime.navimow_last_height_change'),
+                states('input_number.navimow_heat_temp_c') | float,
+                states('input_number.navimow_dry_mm') | float,
+                states('input_number.navimow_cool_temp_c') | float,
+                states('input_number.navimow_wet_mm') | float,
+                states('input_number.navimow_window_days') | int,
+                states('input_number.navimow_cycle_days') | float,
+                states('input_number.navimow_coverage_cycles') | int,
+                states('input_number.navimow_recovery_buffer_days') | int,
+                states('input_number.navimow_height_step_mm') | int) | from_json).can_act }}
+
+  - binary_sensor:
+      - name: Navimow action needed
+        unique_id: navimow_action_needed
+        state: "{{ state_attr('sensor.navimow_recommended_height', 'can_act') | bool(false) }}"
+
+script:
+  navimow_notify_height:
+    alias: Navimow - send height notification
+    sequence:
+      - service: "{{ states('input_text.navimow_notify_service') }}"
+        data:
+          title: Navimow cut height
+          message: >
+            Set Navimow to {{ states('sensor.navimow_recommended_height') }}mm
+            ({{ state_attr('sensor.navimow_recommended_height', 'direction') }}) -
+            {{ state_attr('sensor.navimow_recommended_height', 'reason') }}.
+            Turn on Tailscale before tapping, then confirm on the card.
+          data:
+            tag: navimow_height
+            clickAction: "/navimow-cut-height/cut-height"
+            actions:
+              - action: URI
+                title: Open card
+                uri: "/navimow-cut-height/cut-height"
+      - service: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.navimow_snooze_until
+        data:
+          datetime: "{{ (now() + timedelta(hours=3)).strftime('%Y-%m-%d %H:%M:%S') }}"
+
+automation:
+  - id: navimow_notify_on_change
+    alias: Navimow - notify on new recommendation
+    mode: single
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.navimow_action_needed
+        to: "on"
+    condition:
+      - condition: template
+        value_template: >
+          {{ as_timestamp(now()) >= as_timestamp(states('input_datetime.navimow_snooze_until')) }}
+    action:
+      - service: script.navimow_notify_height
+
+  - id: navimow_notify_renag
+    alias: Navimow - re-nag while action needed
+    mode: single
+    trigger:
+      - platform: time_pattern
+        minutes: "/30"
+    condition:
+      - condition: state
+        entity_id: binary_sensor.navimow_action_needed
+        state: "on"
+      - condition: template
+        value_template: >
+          {{ as_timestamp(now()) >= as_timestamp(states('input_datetime.navimow_snooze_until')) }}
+      - condition: time
+        after: "08:00:00"
+        before: "20:00:00"
+    action:
+      - service: script.navimow_notify_height
+
+  - id: navimow_height_done
+    alias: Navimow - height applied
+    mode: single
+    trigger:
+      - platform: event
+        event_type: mobile_app_notification_action
+        event_data:
+          action: NAVIMOW_HEIGHT_DONE
+      - platform: state
+        entity_id: input_button.navimow_mark_applied
+    action:
+      - service: input_number.set_value
+        target:
+          entity_id: input_number.navimow_current_height
+        data:
+          value: "{{ states('sensor.navimow_recommended_height') | int }}"
+      - service: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.navimow_last_height_change
+        data:
+          datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+
+  - id: navimow_height_snooze_3h
+    alias: Navimow - snooze 3 hours
+    mode: single
+    trigger:
+      - platform: state
+        entity_id: input_button.navimow_snooze_3h
+    action:
+      - service: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.navimow_snooze_until
+        data:
+          datetime: "{{ (now() + timedelta(hours=3)).strftime('%Y-%m-%d %H:%M:%S') }}"
+
+  - id: navimow_height_snooze_2d
+    alias: Navimow - snooze 2 days
+    mode: single
+    trigger:
+      - platform: state
+        entity_id: input_button.navimow_snooze_2d
+    action:
+      - service: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.navimow_snooze_until
+        data:
+          datetime: "{{ (now() + timedelta(days=2)).strftime('%Y-%m-%d %H:%M:%S') }}"
