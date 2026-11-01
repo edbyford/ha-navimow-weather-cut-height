@@ -3,16 +3,17 @@
 # Rules and sources: docs/seasonal-cut-height-research.md.
 #
 # Before installing, replace:
-#   number.navimow_global_cutting_height, lawn_mower.navimow, switch.navimow_mowing_schedule
-#     with your mower's entities (Navimow HA Pro names them after the mower)
+#   number.navimow_global_cutting_height, lawn_mower.navimow, switch.navimow_mowing_schedule,
+#   sensor.navimow_schedule with your mower's entities (Navimow HA Pro names them after the mower)
 #   notify.mobile_app_your_phone with your phone's notify service
 # Weather comes from Open-Meteo for your Home zone, so no location is stored here.
 #
-# Each evening at 20:00 the plan is fixed for tomorrow. Any change (new height, winter
-# pause or resume) is sent to your phone as a question. Unless you tap Skip, it is applied
-# at 10:00 next day while the mower is docked, or at its next dock after that. Skip holds
-# everything for 2 days. A step-down (5 mm every 2 days) is asked about once per descent.
-# Change the 10:00 to just before your mowing schedule starts.
+# Once a day, 60 minutes before the mower's first mowing window (read from its schedule,
+# so it follows any change; 10:00 if the schedule has none), the plan for the day is fixed.
+# Any change (new height, winter pause or resume) is sent to your phone as a question.
+# Unless you tap Skip, it is applied 5 minutes before the window while the mower is docked,
+# or at its next dock after that. Skip holds everything for 2 days. A step-down (5 mm every
+# 2 days) is asked about once per descent.
 
 rest:
   # Open-Meteo (free, no key) for your Home zone: past 21 days + 6 days of forecast.
@@ -37,6 +38,31 @@ rest:
 
 template:
   - sensor:
+      - name: Cut height first mow
+        unique_id: cut_height_first_mow
+        icon: mdi:clock-start
+        device_class: timestamp
+        # Start of the mower's first mowing window today, or on the next day that has one,
+        # from its Navimow HA Pro schedule. 10:00 if the schedule has no windows.
+        state: >-
+          {%- set days = state_attr('sensor.navimow_schedule', 'days') or [] -%}
+          {%- set ns = namespace(t=none) -%}
+          {%- for k in range(0, 8) -%}
+            {%- if ns.t is none -%}
+              {%- set d = now() + timedelta(days=k) -%}
+              {%- set e = days | selectattr('weekday', 'eq', d.strftime('%A')) | selectattr('enabled') | list -%}
+              {%- set starts = (e[0].periods | map(attribute='start_min') | list) if e else [] -%}
+              {%- if starts -%}
+                {%- set t = d.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(minutes=starts | min) -%}
+                {%- if t > now() %}{% set ns.t = t %}{% endif -%}
+              {%- endif -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {%- if ns.t is none -%}
+            {%- set t = now().replace(hour=10, minute=0, second=0, microsecond=0) -%}
+            {%- set ns.t = t if t > now() else t + timedelta(days=1) -%}
+          {%- endif -%}
+          {{ ns.t.isoformat() }}
       - name: Cut height plan
         unique_id: cut_height_plan
         unit_of_measurement: mm
@@ -211,12 +237,14 @@ script:
 
 automation:
   - id: cut_height_evening
-    alias: Cut height - evening check
-    description: Fix tomorrow's plan, update the latches, ask about any change.
+    alias: Cut height - daily check
+    description: An hour before the first mow, fix the day's plan, update the latches, ask about any change.
     mode: single
     triggers:
       - trigger: time
-        at: "20:00:00"
+        at:
+          entity_id: sensor.cut_height_first_mow
+          offset: "-01:00:00"
     conditions:
       - condition: template
         value_template: "{{ has_value('sensor.cut_height_plan') }}"
@@ -290,15 +318,17 @@ automation:
                 {% if new_height %}{{ height }} → {{ new_height }} mm{% if lowering and plan.want < new_height %},
                 then 5 mm every 2 days down to {{ plan.want }} mm{% endif %} ({{ plan.why }}).{% endif %}
                 {% if mowing == 'pause' %}Winter pause: mowing schedule off.{% elif mowing == 'resume' %}Grass growing again: mowing schedule back on.{% endif %}
-                7-day mean {{ plan.t7 }} °C. Happens at 10:00 tomorrow while the mower is docked unless you skip.
+                7-day mean {{ plan.t7 }} °C. Happens at {{ (as_datetime(states('sensor.cut_height_first_mow')) - timedelta(minutes=5)) | as_local | as_timestamp | timestamp_custom('%H:%M') }} while the mower is docked unless you skip.
 
   - id: cut_height_apply
     alias: Cut height - apply
-    description: At 10:00 (or Apply now, or the mower's next dock) set the height and schedule.
+    description: 5 min before the first mow (or Apply now, or the mower's next dock) set the height and schedule.
     mode: single
     triggers:
       - trigger: time
-        at: "10:00:00"
+        at:
+          entity_id: sensor.cut_height_first_mow
+          offset: "-00:05:00"
         id: due
       - trigger: event
         event_type: mobile_app_notification_action

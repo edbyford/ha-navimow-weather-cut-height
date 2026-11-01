@@ -7,7 +7,9 @@ entities:
   - entity: number.navimow_global_cutting_height
     name: Mower height now
   - entity: sensor.cut_height_plan
-    name: Tomorrow's height
+    name: Planned height
+  - entity: sensor.cut_height_first_mow
+    name: First mow (asks an hour before)
   - type: attribute
     entity: sensor.cut_height_plan
     attribute: why

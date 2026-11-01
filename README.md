@@ -45,11 +45,13 @@ Everything keys off **T7**, the mean of the last 7 daily mean air temperatures.
 
 ## Ask, then apply
 
-- At **20:00** the plan for tomorrow is fixed. If anything changes (a new height, or
-  pausing or resuming the schedule) you get one phone notification with **Apply now**
-  and **Skip 2 days**.
-- With no answer, it's applied at **10:00** next day if the mower is docked, otherwise
-  at its next dock. Set that time to just before your schedule starts.
+- **An hour before the mower's first mowing window** of the day, the plan for the day is
+  fixed. The window is read from the mower's own schedule (`sensor.<mower>_schedule` from
+  Navimow HA Pro), so the timing follows any change you make in the app; with no windows
+  it uses 10:00. If anything changes (a new height, or pausing or resuming the schedule)
+  you get one phone notification with **Apply now** and **Skip 2 days**.
+- With no answer, it's applied **5 minutes before the window** if the mower is docked,
+  otherwise at its next dock.
 - The height is read back from the mower, and you're told if it didn't take.
 - A step-down (say 70 → 50 mm over 8 days) is asked about once, not at every step.
 - The schedule is only switched back on if this switched it off.
@@ -89,7 +91,7 @@ dry-spell rule needs. No location is stored in these files; the URL is built fro
 ## Setup
 
 1. Install Navimow HA Pro and check you have `number.<mower>_global_cutting_height`,
-   `lawn_mower.<mower>` and `switch.<mower>_mowing_schedule`.
+   `lawn_mower.<mower>`, `switch.<mower>_mowing_schedule` and `sensor.<mower>_schedule`.
 2. In `packages/cut_height_year_round.yaml` and `custom_templates/cut_height.jinja`,
    replace `navimow` in those entity IDs with your mower's name, and
    `notify.mobile_app_your_phone` with your notify service.
@@ -108,7 +110,7 @@ dry-spell rule needs. No location is stored in these files; the URL is built fro
 `scripts/deploy.sh` does steps 4 and 5 if you have the Terminal & SSH add-on.
 
 Notification buttons need your phone to reach Home Assistant. If they don't, the
-change still happens at 10:00. To hold changes without the button, set
+change still happens 5 minutes before the first mow. To hold changes without the button, set
 `input_datetime.cut_height_skip_until` (it's on the card).
 
 ## Test
