@@ -1,104 +1,127 @@
-# Navimow weather-aware cutting height
+# Navimow cut height, year round
 
-A small Home Assistant setup that adjusts a Segway Navimow's cutting height to the
-weather, so you keep the lawn low without scalping it during hot, dry spells. It
-raises the height when a heatwave is forecast and steps it back down to your
-target once the weather is kind again, respecting the one-third mowing rule.
+A small Home Assistant setup that sets a Segway Navimow's cutting height from the
+weather, all year: lower in summer, higher for autumn and winter, raised for heat and
+dry spells, and a winter pause when the grass stops growing. It asks you first and
+then does it itself.
 
-It is **decision-only**. The current Navimow integration does not expose cutting
-height, so Home Assistant works out the right height and sends you a notification;
-you set it in the Navimow app and tap a button to confirm. Nothing is sent to the
-mower automatically. If a way to set Navimow height from HA appears, this would
-drop the manual step.
+> This is shared as a reference for how I did it, not a turnkey add-on. You wire it
+> into your own Home Assistant and change the entity names to match your setup.
 
-> This is shared as a reference for how I did it, not a turnkey add-on. There is
-> no live mower or account attached. You wire it into your own Home Assistant and
-> change the entity names to match your setup.
+**What changed (November 2026).** Version 1 (tag [`v1`](../../tree/v1)) was
+summer-only and decision-only: it worked out a height for hot spells and reminded you
+to set it in the Navimow app. Two things changed:
 
-## How it works
+- **Navimow HA Pro** (a third-party integration,
+  [ericallard3414-arch/navimow-ha-pro](https://github.com/ericallard3414-arch/navimow-ha-pro))
+  exposes the height as a number entity that Home Assistant can set. So the manual
+  step is gone.
+- An automatic height has to be right in every season, not just in summer, so the
+  rules were redone from the horticultural sources for autumn, winter, frost and spring.
+  The research, with citations, is in
+  [`docs/seasonal-cut-height-research.md`](docs/seasonal-cut-height-research.md).
 
-- You set a **target** height (your normal cut) and a **protective** height
-  (raised, for heat). The system tracks the **current** height itself, since it
-  cannot read it from the mower.
-- Each day it reads your weather entity's daily forecast. A day counts as
-  heat-stress if it is hot and dry (defaults: max temp at or above 26 C, and
-  under 1 mm rain), within a forecast window (default 5 days).
-- If heat stress is coming, it recommends jumping to the protective height
-  (raising never stresses grass, so it is instant).
-- When the week is calm, it steps the height **down** by the one-third rule
-  (never removing more than a third of the blade at once), one step at a time,
-  waiting a settle period between steps so the mower actually reaches the new
-  height across the whole lawn before the next step.
-- All thresholds are Home Assistant helpers you can tune in the UI.
+## How it decides
 
-The decision logic lives in one place as a Python function
-(`reference/decision.py`), and the deployed Home Assistant version is a Jinja
-macro (`custom_templates/navimow.jinja`) that mirrors it. A parity test renders
-the deployed macro through HA's `/api/template` and checks it matches the Python
-oracle, so the two cannot drift.
+Everything keys off **T7**, the mean of the last 7 daily mean air temperatures.
+
+| Season | Rule | Default |
+| --- | --- | --- |
+| Summer | normal height | 50 mm |
+| Heat | forecast max ≥ 27 °C or mean ≥ 25 °C in the next 5 days; held 3 days after | 70 mm |
+| Dry spell | 21-day evapotranspiration minus rain ≥ 45 mm while T7 ≥ 14 °C; ends after 10 mm of rain in 3 days | 70 mm |
+| Autumn | from September once T7 < 12 °C (and any time T7 < 8 °C) | 55 mm |
+| Winter pause | mowing schedule off once T7 < 6 °C; back on after 5 days at T7 ≥ 8 °C, never in December or January | |
+| Spring | winter height kept until T7 ≥ 10 °C from February, then down | 50 mm |
+
+- **Raise at once; lower slowly:** at most 5 mm every 2 days, and only while T7 ≥ 10 °C
+  with no heat, dry spell or pause. Never below 40 mm from October to March.
+- Frost, snow, rain and heat on the day are left to the mower's own delay settings.
+- Why these numbers: RHS (+5 mm for winter, mow above about 7 °C), Navimow and
+  Husqvarna guidance on cold, the 6 °C base used for turf growing-degree days, and an
+  Oregon State/USGA study on traffic over frost. The research doc has the sources and
+  where they disagree (for example, Purdue argues against raising the height in drought
+  on lawns that aren't watered).
+
+## Ask, then apply
+
+- At **20:00** the plan for tomorrow is fixed. If anything changes (a new height, or
+  pausing or resuming the schedule) you get one phone notification with **Apply now**
+  and **Skip 2 days**.
+- With no answer, it's applied at **10:00** next day if the mower is docked, otherwise
+  at its next dock. Set that time to just before your schedule starts.
+- The height is read back from the mower, and you're told if it didn't take.
+- A step-down (say 70 → 50 mm over 8 days) is asked about once, not at every step.
+- The schedule is only switched back on if this switched it off.
+
+## Weather
+
+Daily data from [Open-Meteo](https://open-meteo.com/) (free, no key) for your Home
+zone's coordinates: the past 21 days (temperature, rain, evapotranspiration) and 6 days
+of forecast. A normal weather entity has no past rain or evapotranspiration, which the
+dry-spell rule needs. No location is stored in these files; the URL is built from
+`zone.home`.
+
+## Tested
+
+- `reference/plan.py` is the logic in Python; `custom_templates/cut_height.jinja` is the
+  same logic as a Jinja macro (what Home Assistant runs).
+- `tests/test_plan.py`: unit tests for each season's rules.
+- `tests/test_parity_plan_ha.py`: renders the macro on a live Home Assistant and checks
+  it matches the Python for 47 cases (7 fixed, 40 random). Read-only.
+- `tools/replay.py`: replays the rules day by day over past weather for any location,
+  so you can see what they would have done before installing. On two years of weather
+  for a site in southern England it gave one winter pause each winter (about late
+  November to late February or March) and roughly 11 to 16 questions a year. Running
+  the macro on Home Assistant over the same 747 days gave the same answers every day.
 
 ## Layout
 
-- `reference/decision.py` - the decision logic in Python (the test oracle).
-- `custom_templates/navimow.jinja` - the same logic as a Jinja macro (deployed).
-- `packages/navimow_cut_height.yaml` - helpers, the sensor, automations, and the
-  notification + confirm flow. Change `weather.home` and the notify service to
-  your own.
-- `dashboards/` - a card and a small dashboard with the recommendation and the
-  Mark applied / Snooze buttons.
-- `tests/` - unit tests for the logic, and a live parity test.
-- `scripts/` - SSH/API helper and a deploy script (set `HA_IP`, `HA_KEY`,
-  `HA_TOKEN`).
+- `packages/cut_height_year_round.yaml`: the Open-Meteo sensor, the plan sensor,
+  helpers and tunables, the notify script and the three automations.
+- `custom_templates/cut_height.jinja`: the decision macro.
+- `reference/plan.py`: the same decision in Python (the test oracle).
+- `tools/replay.py`: replay over past weather.
+- `dashboards/cut_height_card.yaml`: an entities card.
+- `docs/seasonal-cut-height-research.md`: the research.
+- `scripts/`: SSH/API helper and a deploy script (set `HA_IP`, `HA_KEY`, `HA_TOKEN`).
 
 ## Setup
 
-1. Edit `packages/navimow_cut_height.yaml`: set your daily-forecast weather
-   entity (replace `weather.home`) and your notify service.
-2. Copy `custom_templates/navimow.jinja` to `/config/custom_templates/`,
-   `packages/navimow_cut_height.yaml` to `/config/packages/`, and
-   `dashboards/navimow_dashboard.yaml` to `/config/`.
-3. Enable packages and register the dashboard in `configuration.yaml`:
+1. Install Navimow HA Pro and check you have `number.<mower>_global_cutting_height`,
+   `lawn_mower.<mower>` and `switch.<mower>_mowing_schedule`.
+2. In `packages/cut_height_year_round.yaml` and `custom_templates/cut_height.jinja`,
+   replace `navimow` in those entity IDs with your mower's name, and
+   `notify.mobile_app_your_phone` with your notify service.
+3. Make sure your Home zone is where the lawn is (Settings > Areas & zones).
+4. Copy `custom_templates/cut_height.jinja` to `/config/custom_templates/` and
+   `packages/cut_height_year_round.yaml` to `/config/packages/`, with packages enabled:
    ```yaml
    homeassistant:
      packages: !include_dir_named packages
-   lovelace:
-     mode: storage
-     dashboards:
-       navimow-cut-height:
-         mode: yaml
-         title: Navimow
-         icon: mdi:robot-mower
-         show_in_sidebar: true
-         filename: navimow_dashboard.yaml
    ```
-4. Restart Home Assistant, then set the helper values (see
-   `packages/navimow_initial_values.md`).
+5. Check the config and restart (or reload custom templates, the `input_*` helpers,
+   `rest`, `template`, `script` and `automation`).
+6. Set the helper values in `packages/cut_height_initial_values.md`, including resetting
+   two date helpers.
 
-`scripts/deploy.sh` automates steps 2-4 if you have the Terminal & SSH add-on.
+`scripts/deploy.sh` does steps 4 and 5 if you have the Terminal & SSH add-on.
 
-## Confirming a change
-
-When you get the notification, set the height in the Navimow app, then tap
-**Mark applied** on the dashboard card so the tracked height advances. There are
-also **Snooze 3 hours** and **Snooze 2 days** buttons. The reminder recurs
-(daytime) while a change is still pending, and always shows the latest
-recommendation.
-
-Note: notification action buttons need your phone to reach Home Assistant. If
-they do not (for example a cloudhook that is not active), use the dashboard
-buttons instead, which work over whatever connection loads the HA app.
+Notification buttons need your phone to reach Home Assistant. If they don't, the
+change still happens at 10:00. To hold changes without the button, set
+`input_datetime.cut_height_skip_until` (it's on the card).
 
 ## Test
 
     python3 -m venv .venv && .venv/bin/pip install pytest
     .venv/bin/python -m pytest          # unit tests; live parity test runs if HA_URL/HA_TOKEN set
+    .venv/bin/python -m tools.replay --lat 51.5 --lon -0.12 --start 2024-09-01 --end 2026-08-31
 
 ## Requirements
 
-- Home Assistant 2026.1 or newer (trigger-based template entities with an
-  `action:` block).
-- A weather entity that provides a daily forecast with temperature and
-  precipitation.
+- Home Assistant 2026.1 or newer.
+- Navimow HA Pro (public beta; uses Segway's unofficial cloud API as well as the official
+  one, so it can break if Segway changes it).
 
 ## Licence
 

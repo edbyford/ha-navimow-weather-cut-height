@@ -1,0 +1,431 @@
+# Year-round robot-mower cut height: weather, state, ask-then-apply.
+# The decision is the cut_height_plan() macro in custom_templates/cut_height.jinja.
+# Rules and sources: docs/seasonal-cut-height-research.md.
+#
+# Before installing, replace:
+#   number.navimow_global_cutting_height, lawn_mower.navimow, switch.navimow_mowing_schedule
+#     with your mower's entities (Navimow HA Pro names them after the mower)
+#   notify.mobile_app_your_phone with your phone's notify service
+# Weather comes from Open-Meteo for your Home zone, so no location is stored here.
+#
+# Each evening at 20:00 the plan is fixed for tomorrow. Any change (new height, winter
+# pause or resume) is sent to your phone as a question. Unless you tap Skip, it is applied
+# at 10:00 next day while the mower is docked, or at its next dock after that. Skip holds
+# everything for 2 days. A step-down (5 mm every 2 days) is asked about once per descent.
+# Change the 10:00 to just before your mowing schedule starts.
+
+rest:
+  # Open-Meteo (free, no key) for your Home zone: past 21 days + 6 days of forecast.
+  - resource_template: >-
+      https://api.open-meteo.com/v1/forecast?latitude={{ state_attr('zone.home', 'latitude') | round(2) }}&longitude={{ state_attr('zone.home', 'longitude') | round(2) }}&daily=temperature_2m_mean,temperature_2m_max,temperature_2m_min,precipitation_sum,et0_fao_evapotranspiration&past_days=21&forecast_days=6&timezone=auto
+    scan_interval: 3600
+    timeout: 30
+    sensor:
+      - name: Cut height weather
+        unique_id: cut_height_weather_open_meteo
+        icon: mdi:weather-partly-cloudy
+        # State: the newest past day in the data (today's date when fresh).
+        value_template: "{{ value_json.daily.time[21] if value_json.daily is defined else none }}"
+        json_attributes_path: "$.daily"
+        json_attributes:
+          - time
+          - temperature_2m_mean
+          - temperature_2m_max
+          - temperature_2m_min
+          - precipitation_sum
+          - et0_fao_evapotranspiration
+
+template:
+  - sensor:
+      - name: Cut height plan
+        unique_id: cut_height_plan
+        unit_of_measurement: mm
+        icon: mdi:grass
+        availability: >
+          {% from 'cut_height.jinja' import cut_height_plan_live %}
+          {{ 'error' not in (cut_height_plan_live() | from_json) }}
+        state: >
+          {% from 'cut_height.jinja' import cut_height_plan_live %}
+          {{ (cut_height_plan_live() | from_json).next }}
+        attributes:
+          why: >
+            {% from 'cut_height.jinja' import cut_height_plan_live %}
+            {{ (cut_height_plan_live() | from_json).why }}
+          t7: >
+            {% from 'cut_height.jinja' import cut_height_plan_live %}
+            {{ (cut_height_plan_live() | from_json).t7 }}
+          plan: >
+            {% from 'cut_height.jinja' import cut_height_plan_live %}
+            {{ cut_height_plan_live() | from_json }}
+
+input_number:
+  # Tunables (set once after first load; restored across restarts).
+  cut_height_target:
+    name: Cut height summer
+    min: 30
+    max: 95
+    step: 5
+    unit_of_measurement: mm
+    icon: mdi:target
+  cut_height_winter:
+    name: Cut height winter
+    min: 40
+    max: 95
+    step: 5
+    unit_of_measurement: mm
+    icon: mdi:snowflake
+  cut_height_protective:
+    name: Cut height heat and drought
+    min: 40
+    max: 95
+    step: 5
+    unit_of_measurement: mm
+    icon: mdi:weather-sunny-alert
+  cut_height_grow_temp:
+    name: Cut height growing above (7-day mean)
+    min: 5
+    max: 15
+    step: 0.5
+    unit_of_measurement: "°C"
+  cut_height_slow_temp:
+    name: Cut height winter pause below (7-day mean)
+    min: 2
+    max: 10
+    step: 0.5
+    unit_of_measurement: "°C"
+  cut_height_resume_temp:
+    name: Cut height resume at (7-day mean, 5 days)
+    min: 4
+    max: 12
+    step: 0.5
+    unit_of_measurement: "°C"
+  cut_height_autumn_temp:
+    name: Cut height autumn raise below (7-day mean)
+    min: 8
+    max: 16
+    step: 0.5
+    unit_of_measurement: "°C"
+  cut_height_heat_max_temp:
+    name: Cut height heat if daily max at least
+    min: 20
+    max: 35
+    step: 1
+    unit_of_measurement: "°C"
+  cut_height_heat_mean_temp:
+    name: Cut height heat if daily mean at least
+    min: 18
+    max: 30
+    step: 1
+    unit_of_measurement: "°C"
+  cut_height_dry_deficit:
+    name: Cut height dry spell at 21-day deficit
+    min: 20
+    max: 100
+    step: 5
+    unit_of_measurement: mm
+  # State, written by the automations below (0 = nothing pending / no descent).
+  cut_height_pending_height:
+    name: Cut height pending height
+    min: 0
+    max: 95
+    step: 5
+    unit_of_measurement: mm
+  cut_height_descent_to:
+    name: Cut height approved descent target
+    min: 0
+    max: 95
+    step: 5
+    unit_of_measurement: mm
+
+input_boolean:
+  cut_height_winter_latch:
+    name: Cut height winter height latch
+    icon: mdi:snowflake-thermometer
+  cut_height_winter_pause:
+    name: Cut height winter pause wanted
+    icon: mdi:sleep
+  cut_height_dry_spell:
+    name: Cut height dry spell
+    icon: mdi:water-off
+  cut_height_paused_by_ha:
+    name: Cut height schedule paused by HA
+    icon: mdi:calendar-remove
+  cut_height_apply_due:
+    name: Cut height change due
+    icon: mdi:clock-check
+
+input_datetime:
+  cut_height_heat_until:
+    name: Cut height heat hold until
+    has_date: true
+    has_time: false
+  cut_height_last_lower:
+    name: Cut height last lowered
+    has_date: true
+    has_time: false
+  cut_height_skip_until:
+    name: Cut height skip until
+    has_date: true
+    has_time: true
+
+input_select:
+  cut_height_pending_mowing:
+    name: Cut height pending mowing change
+    options:
+      - none
+      - pause
+      - resume
+
+script:
+  cut_height_notify:
+    alias: Cut height - notify
+    mode: queued
+    fields:
+      message:
+        description: Text
+      ask:
+        description: Add Apply now / Skip buttons
+    sequence:
+      - if:
+          - condition: template
+            value_template: "{{ ask | default(false) | bool }}"
+        then:
+          - action: notify.mobile_app_your_phone
+            data:
+              title: Mower cut height
+              message: "{{ message }}"
+              data:
+                tag: cut_height
+                actions:
+                  - action: CUT_HEIGHT_APPLY_NOW
+                    title: Apply now
+                  - action: CUT_HEIGHT_SKIP
+                    title: Skip 2 days
+        else:
+          - action: notify.mobile_app_your_phone
+            data:
+              title: Mower cut height
+              message: "{{ message }}"
+              data:
+                tag: cut_height
+
+automation:
+  - id: cut_height_evening
+    alias: Cut height - evening check
+    description: Fix tomorrow's plan, update the latches, ask about any change.
+    mode: single
+    triggers:
+      - trigger: time
+        at: "20:00:00"
+    conditions:
+      - condition: template
+        value_template: "{{ has_value('sensor.cut_height_plan') }}"
+    actions:
+      - variables:
+          plan: "{{ state_attr('sensor.cut_height_plan', 'plan') }}"
+          height: "{{ states('number.navimow_global_cutting_height') | int }}"
+          skipping: "{{ as_timestamp(states('input_datetime.cut_height_skip_until'), 0) > as_timestamp(now()) }}"
+          new_height: "{{ plan.next if plan.next != height else 0 }}"
+          lowering: "{{ 0 < new_height < height }}"
+          covered: "{{ lowering and (states('input_number.cut_height_descent_to') | int) == plan.want }}"
+          mowing: >
+            {% if plan.pause and is_state('switch.navimow_mowing_schedule', 'on') %}pause
+            {% elif not plan.pause and is_state('input_boolean.cut_height_paused_by_ha', 'on') %}resume
+            {% else %}none{% endif %}
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.cut_height_apply_due
+      - action: "input_boolean.turn_{{ 'on' if plan.latch else 'off' }}"
+        target:
+          entity_id: input_boolean.cut_height_winter_latch
+      - action: "input_boolean.turn_{{ 'on' if plan.pause else 'off' }}"
+        target:
+          entity_id: input_boolean.cut_height_winter_pause
+      - action: "input_boolean.turn_{{ 'on' if plan.dry else 'off' }}"
+        target:
+          entity_id: input_boolean.cut_height_dry_spell
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.cut_height_heat_until
+        data:
+          date: "{{ plan.heat_until }}"
+      - if:
+          - condition: template
+            value_template: "{{ skipping or (new_height == 0 and mowing == 'none') }}"
+        then:
+          - action: input_number.set_value
+            target:
+              entity_id: input_number.cut_height_pending_height
+            data:
+              value: 0
+          - action: input_select.select_option
+            target:
+              entity_id: input_select.cut_height_pending_mowing
+            data:
+              option: none
+          - stop: "Nothing to change (or skipped)"
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.cut_height_pending_height
+        data:
+          value: "{{ new_height }}"
+      - action: input_select.select_option
+        target:
+          entity_id: input_select.cut_height_pending_mowing
+        data:
+          option: "{{ mowing }}"
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.cut_height_descent_to
+        data:
+          value: "{{ plan.want if lowering else 0 }}"
+      - if:
+          - condition: template
+            value_template: "{{ not covered or mowing != 'none' }}"
+        then:
+          - action: script.cut_height_notify
+            data:
+              ask: true
+              message: >-
+                {% if new_height %}{{ height }} → {{ new_height }} mm{% if lowering and plan.want < new_height %},
+                then 5 mm every 2 days down to {{ plan.want }} mm{% endif %} ({{ plan.why }}).{% endif %}
+                {% if mowing == 'pause' %}Winter pause: mowing schedule off.{% elif mowing == 'resume' %}Grass growing again: mowing schedule back on.{% endif %}
+                7-day mean {{ plan.t7 }} °C. Happens at 10:00 tomorrow while the mower is docked unless you skip.
+
+  - id: cut_height_apply
+    alias: Cut height - apply
+    description: At 10:00 (or Apply now, or the mower's next dock) set the height and schedule.
+    mode: single
+    triggers:
+      - trigger: time
+        at: "10:00:00"
+        id: due
+      - trigger: event
+        event_type: mobile_app_notification_action
+        event_data:
+          action: CUT_HEIGHT_APPLY_NOW
+        id: due
+      - trigger: state
+        entity_id: lawn_mower.navimow
+        to: docked
+        for: "00:02:00"
+        id: docked
+    conditions:
+      - condition: template
+        value_template: >
+          {{ (states('input_number.cut_height_pending_height') | int) > 0
+             or not is_state('input_select.cut_height_pending_mowing', 'none') }}
+    actions:
+      - if:
+          - condition: trigger
+            id: due
+        then:
+          - action: input_boolean.turn_on
+            target:
+              entity_id: input_boolean.cut_height_apply_due
+      - condition: state
+        entity_id: input_boolean.cut_height_apply_due
+        state: "on"
+      - condition: state
+        entity_id: lawn_mower.navimow
+        state: docked
+      - variables:
+          target: "{{ states('input_number.cut_height_pending_height') | int }}"
+          before: "{{ states('number.navimow_global_cutting_height') | int(0) }}"
+          mowing: "{{ states('input_select.cut_height_pending_mowing') }}"
+      - if:
+          - condition: template
+            value_template: "{{ target > 0 and target != before }}"
+        then:
+          - action: number.set_value
+            target:
+              entity_id: number.navimow_global_cutting_height
+            data:
+              value: "{{ target }}"
+          - wait_template: "{{ (states('number.navimow_global_cutting_height') | int(0)) == target }}"
+            timeout: "00:05:00"
+          - if:
+              - condition: template
+                value_template: "{{ not wait.completed }}"
+            then:
+              - action: script.cut_height_notify
+                data:
+                  message: >-
+                    Couldn't set the mower to {{ target }} mm: it still reports
+                    {{ states('number.navimow_global_cutting_height') }} mm. The evening check will try again.
+            else:
+              - if:
+                  - condition: template
+                    value_template: "{{ target < before }}"
+                then:
+                  - action: input_datetime.set_datetime
+                    target:
+                      entity_id: input_datetime.cut_height_last_lower
+                    data:
+                      date: "{{ now().date() }}"
+      - if:
+          - condition: template
+            value_template: "{{ mowing == 'pause' }}"
+        then:
+          - action: switch.turn_off
+            target:
+              entity_id: switch.navimow_mowing_schedule
+          - action: input_boolean.turn_on
+            target:
+              entity_id: input_boolean.cut_height_paused_by_ha
+      - if:
+          - condition: template
+            value_template: "{{ mowing == 'resume' }}"
+        then:
+          - action: switch.turn_on
+            target:
+              entity_id: switch.navimow_mowing_schedule
+          - action: input_boolean.turn_off
+            target:
+              entity_id: input_boolean.cut_height_paused_by_ha
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.cut_height_pending_height
+        data:
+          value: 0
+      - action: input_select.select_option
+        target:
+          entity_id: input_select.cut_height_pending_mowing
+        data:
+          option: none
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.cut_height_apply_due
+
+  - id: cut_height_skip
+    alias: Cut height - skip 2 days
+    mode: single
+    triggers:
+      - trigger: event
+        event_type: mobile_app_notification_action
+        event_data:
+          action: CUT_HEIGHT_SKIP
+    actions:
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.cut_height_skip_until
+        data:
+          datetime: "{{ (now() + timedelta(days=2)).strftime('%Y-%m-%d %H:%M:%S') }}"
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.cut_height_pending_height
+        data:
+          value: 0
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.cut_height_descent_to
+        data:
+          value: 0
+      - action: input_select.select_option
+        target:
+          entity_id: input_select.cut_height_pending_mowing
+        data:
+          option: none
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.cut_height_apply_due

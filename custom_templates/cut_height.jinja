@@ -1,0 +1,104 @@
+{#- Year-round robot-mower cut height: the decision.
+    cut_height_plan() is pure: it only reads its arguments, so it can be tested
+    against historical weather. reference/plan.py is the same logic in Python, and
+    tests/test_parity_plan_ha.py checks the two agree. cut_height_plan_live() gathers
+    the live inputs and calls it. Rules and sources: docs/seasonal-cut-height-research.md.
+
+    d      Open-Meteo daily arrays (time, temperature_2m_mean, temperature_2m_max,
+           precipitation_sum, et0_fao_evapotranspiration), at least 20 days before today
+    i      index of today in d.time
+    height the mower's real height now (mm)
+    today  'YYYY-MM-DD'; heat_until, last_lower likewise
+    latch, pause, dry  current state of the three latches (booleans)
+    p      tunables: target, winter, protective, grow, slow, resume, autumn,
+           heat_max, heat_mean, dry_deficit
+
+    Replace number.navimow_global_cutting_height with your mower's entity.
+-#}
+{% macro cut_height_plan(d, i, height, month, today, latch, pause, dry, heat_until, last_lower, p) -%}
+{%- set tm = d.temperature_2m_mean | map('float', 0) | list -%}
+{%- set tx = d.temperature_2m_max | map('float', 0) | list -%}
+{%- set rain = d.precipitation_sum | map('float', 0) | list -%}
+{%- set et0 = d.et0_fao_evapotranspiration | map('float', 0) | list -%}
+{%- set t7 = (tm[i-6:i+1] | sum) / 7 -%}
+{%- set ns = namespace(warm=true, heat_ahead=false) -%}
+{#- warm5: the 7-day mean has been >= resume on each of the last 5 days -#}
+{%- for k in range(i-4, i+1) -%}
+  {%- if (tm[k-6:k+1] | sum) / 7 < p.resume %}{% set ns.warm = false %}{% endif -%}
+{%- endfor -%}
+{#- heat in the next 5 days (today + 4), from the forecast -#}
+{%- for k in range(i, [i+5, tm | length] | min) -%}
+  {%- if tx[k] >= p.heat_max or tm[k] >= p.heat_mean %}{% set ns.heat_ahead = true %}{% endif -%}
+{%- endfor -%}
+{%- set deficit = (et0[i-20:i+1] | sum) - (rain[i-20:i+1] | sum) -%}
+{%- set rain3 = rain[i-2:i+1] | sum -%}
+
+{#- winter pause: on below `slow`; off after 5 days at >= `resume`, never in Dec or Jan -#}
+{%- set pause2 = pause -%}
+{%- if t7 < p.slow %}{% set pause2 = true -%}
+{%- elif pause and ns.warm and month not in [12, 1] %}{% set pause2 = false %}{% endif -%}
+
+{#- winter height latch: set Sep-Dec below `autumn`; cleared Feb-Aug at >= `grow` -#}
+{%- set latch2 = latch -%}
+{%- if month in [9, 10, 11, 12] and t7 < p.autumn %}{% set latch2 = true -%}
+{%- elif month in [2, 3, 4, 5, 6, 7, 8] and t7 >= p.grow and not pause2 %}{% set latch2 = false %}{% endif -%}
+
+{#- dry spell: 21-day ET0 minus rain >= dry_deficit while warm (T7 >= 14); ends after 10 mm in 3 days -#}
+{%- set dry2 = dry -%}
+{%- if deficit >= p.dry_deficit and t7 >= 14 %}{% set dry2 = true %}{% endif -%}
+{%- if dry2 and rain3 >= 10 %}{% set dry2 = false %}{% endif -%}
+
+{#- heat: forecast heat holds the protective height until 3 days after today -#}
+{%- set heat_until2 = heat_until -%}
+{%- if ns.heat_ahead %}{% set heat_until2 = (as_datetime(today) + timedelta(days=3)).date() | string %}{% endif -%}
+{%- set heat = today <= heat_until2 -%}
+
+{%- if heat or dry2 -%}
+  {%- set want = p.protective -%}{%- set why = 'heat' if heat else 'dry spell' -%}
+{%- elif latch2 or t7 < p.resume or (height >= p.winter and t7 < p.grow) -%}
+  {%- set want = p.winter -%}{%- set why = 'winter' if latch2 else 'cool spell' -%}
+{%- else -%}
+  {%- set want = p.target -%}{%- set why = 'growing' -%}
+{%- endif -%}
+{%- if month in [10, 11, 12, 1, 2, 3] %}{% set want = [want, 40] | max %}{% endif -%}
+
+{#- raise at once; lower 5 mm at most every 2 days, only while growing and not stressed -#}
+{%- set since_lower = (as_datetime(today) - as_datetime(last_lower)).days -%}
+{%- if want > height -%}
+  {%- set nxt = want -%}
+{%- elif want < height and t7 >= p.grow and not heat and not dry2 and not pause2 and since_lower >= 2 -%}
+  {%- set nxt = [want, height - 5] | max -%}
+{%- else -%}
+  {%- set nxt = height -%}
+{%- endif -%}
+{{ dict(t7=t7 | round(1), warm5=ns.warm, deficit=deficit | round(1), rain3=rain3 | round(1),
+        heat_ahead=ns.heat_ahead, heat=heat, heat_until=heat_until2, latch=latch2, pause=pause2,
+        dry=dry2, want=want | int, next=nxt | int, height=height, why=why) | to_json }}
+{%- endmacro %}
+
+{% macro cut_height_plan_live() -%}
+{%- set d = states.sensor.cut_height_weather.attributes if states.sensor.cut_height_weather else {} -%}
+{%- set today = now().date() | string -%}
+{%- set ns = namespace(i=-1) -%}
+{%- for t in d.time | default([]) %}{% if t == today %}{% set ns.i = loop.index0 %}{% endif %}{% endfor -%}
+{%- if ns.i < 20 or not has_value('number.navimow_global_cutting_height') -%}
+{{ dict(error='no weather for today or no mower height') | to_json }}
+{%- else -%}
+{%- set p = dict(
+    target=states('input_number.cut_height_target') | int,
+    winter=states('input_number.cut_height_winter') | int,
+    protective=states('input_number.cut_height_protective') | int,
+    grow=states('input_number.cut_height_grow_temp') | float,
+    slow=states('input_number.cut_height_slow_temp') | float,
+    resume=states('input_number.cut_height_resume_temp') | float,
+    autumn=states('input_number.cut_height_autumn_temp') | float,
+    heat_max=states('input_number.cut_height_heat_max_temp') | float,
+    heat_mean=states('input_number.cut_height_heat_mean_temp') | float,
+    dry_deficit=states('input_number.cut_height_dry_deficit') | float) -%}
+{{ cut_height_plan(d, ns.i, states('number.navimow_global_cutting_height') | int, now().month, today,
+             is_state('input_boolean.cut_height_winter_latch', 'on'),
+             is_state('input_boolean.cut_height_winter_pause', 'on'),
+             is_state('input_boolean.cut_height_dry_spell', 'on'),
+             states('input_datetime.cut_height_heat_until'), states('input_datetime.cut_height_last_lower'), p) }}
+{%- endif -%}
+{%- endmacro %}

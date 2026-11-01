@@ -16,17 +16,15 @@ echo "2/6 Ensure target dirs"
 "${SSH[@]}" 'mkdir -p /config/custom_templates /config/packages'
 
 echo "3/6 Copy files"
-"${SCP[@]}" "${HERE}/custom_templates/navimow.jinja" "root@${HA_IP}:/config/custom_templates/navimow.jinja"
-"${SCP[@]}" "${HERE}/packages/navimow_cut_height.yaml" "root@${HA_IP}:/config/packages/navimow_cut_height.yaml"
-"${SCP[@]}" "${HERE}/dashboards/navimow_dashboard.yaml" "root@${HA_IP}:/config/navimow_dashboard.yaml"
+"${SCP[@]}" "${HERE}/custom_templates/cut_height.jinja" "root@${HA_IP}:/config/custom_templates/cut_height.jinja"
+"${SCP[@]}" "${HERE}/packages/cut_height_year_round.yaml" "root@${HA_IP}:/config/packages/cut_height_year_round.yaml"
 
-echo "4/6 Ensure packages include + dashboard registration in configuration.yaml"
-"${SSH[@]}" 'grep -q "packages: !include_dir_named packages" /config/configuration.yaml || printf "\nhomeassistant:\n  packages: !include_dir_named packages\n" >> /config/configuration.yaml'
-"${SSH[@]}" 'grep -q "navimow-cut-height:" /config/configuration.yaml || printf "\nlovelace:\n  mode: storage\n  dashboards:\n    navimow-cut-height:\n      mode: yaml\n      title: Navimow\n      icon: mdi:robot-mower\n      show_in_sidebar: true\n      filename: navimow_dashboard.yaml\n" >> /config/configuration.yaml'
+echo "4/6 Ensure packages are enabled in configuration.yaml"
+"${SSH[@]}" 'grep -q "packages: !include_dir_named packages" /config/configuration.yaml || { echo "Add  homeassistant: packages: !include_dir_named packages  to configuration.yaml (merge it into any existing homeassistant: block), then run this again."; exit 1; }'
 
 echo "5/6 ha core check"
 "${SSH[@]}" 'ha core check'
 
-echo "6/6 Restart HA core (packages + dashboard load at startup)"
+echo "6/6 Restart HA core (a new package loads at startup)"
 "${SSH[@]}" 'ha core restart'
-echo "Done. Wait ~60s, then set the helper values (packages/navimow_initial_values.md)."
+echo "Done. Wait ~60s, then set the helper values (packages/cut_height_initial_values.md)."
