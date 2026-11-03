@@ -52,7 +52,8 @@ Everything keys off **T7**, the mean of the last 7 daily mean air temperatures.
   you get one phone notification with **Apply now** and **Skip 2 days**.
 - With no answer, it's applied **5 minutes before the window** if the mower is docked,
   otherwise at its next dock.
-- The height is read back from the mower, and you're told if it didn't take.
+- The height is read back from the mower 4 minutes later, after Navimow HA Pro's
+  optimistic display has expired, and you're told if it didn't take.
 - A step-down (say 70 → 50 mm over 8 days) is asked about once, not at every step.
 - The schedule is only switched back on if this switched it off.
 
@@ -124,6 +125,11 @@ change still happens 5 minutes before the first mow. To hold changes without the
 - Home Assistant 2026.1 or newer.
 - Navimow HA Pro (public beta; uses Segway's unofficial cloud API as well as the official
   one, so it can break if Segway changes it).
+- **X-series mowers with metric decks (e.g. X450):** Navimow HA Pro 0.9.0 sends the height
+  in a format these mowers misread, so most heights are ignored (and 80/85 mm land as
+  50/55). Fixed in [navimow-ha-pro#46](https://github.com/ericallard3414-arch/navimow-ha-pro/pull/46);
+  until that's released, apply its one-line change to the integration by hand. The read-back
+  above tells you when a height didn't take.
 
 ## Licence
 
