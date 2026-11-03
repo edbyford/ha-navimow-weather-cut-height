@@ -372,8 +372,12 @@ automation:
               entity_id: number.navimow_global_cutting_height
             data:
               value: "{{ target }}"
+          # Navimow HA Pro shows a written value at once and holds it for up to 180 s
+          # while it waits for the cloud, even if the mower never takes it. So only
+          # read back after that window.
+          - delay: "00:04:00"
           - wait_template: "{{ (states('number.navimow_global_cutting_height') | int(0)) == target }}"
-            timeout: "00:05:00"
+            timeout: "00:02:00"
           - if:
               - condition: template
                 value_template: "{{ not wait.completed }}"
@@ -382,7 +386,8 @@ automation:
                 data:
                   message: >-
                     Couldn't set the mower to {{ target }} mm: it still reports
-                    {{ states('number.navimow_global_cutting_height') }} mm. The evening check will try again.
+                    {{ states('number.navimow_global_cutting_height') }} mm. Set it in the Navimow app;
+                    the daily check will otherwise try again tomorrow.
             else:
               - if:
                   - condition: template
