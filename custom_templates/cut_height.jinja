@@ -13,7 +13,7 @@
     p      tunables: target, winter, protective, grow, slow, resume, autumn,
            heat_max, heat_mean, dry_deficit
 
-    Replace number.navimow_global_cutting_height with your mower's entity.
+    Replace number.navimow_cutting_height with your mower's entity.
 -#}
 {% macro cut_height_plan(d, i, height, month, today, latch, pause, dry, heat_until, last_lower, p) -%}
 {%- set tm = d.temperature_2m_mean | map('float', 0) | list -%}
@@ -81,7 +81,7 @@
 {%- set today = now().date() | string -%}
 {%- set ns = namespace(i=-1) -%}
 {%- for t in d.time | default([]) %}{% if t == today %}{% set ns.i = loop.index0 %}{% endif %}{% endfor -%}
-{%- if ns.i < 20 or not has_value('number.navimow_global_cutting_height') -%}
+{%- if ns.i < 20 or not has_value('number.navimow_cutting_height') -%}
 {{ dict(error='no weather for today or no mower height') | to_json }}
 {%- else -%}
 {%- set p = dict(
@@ -95,7 +95,7 @@
     heat_max=states('input_number.cut_height_heat_max_temp') | float,
     heat_mean=states('input_number.cut_height_heat_mean_temp') | float,
     dry_deficit=states('input_number.cut_height_dry_deficit') | float) -%}
-{{ cut_height_plan(d, ns.i, states('number.navimow_global_cutting_height') | int, now().month, today,
+{{ cut_height_plan(d, ns.i, states('number.navimow_cutting_height') | int, now().month, today,
              is_state('input_boolean.cut_height_winter_latch', 'on'),
              is_state('input_boolean.cut_height_winter_pause', 'on'),
              is_state('input_boolean.cut_height_dry_spell', 'on'),

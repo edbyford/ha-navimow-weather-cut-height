@@ -3,8 +3,9 @@
 # Rules and sources: docs/seasonal-cut-height-research.md.
 #
 # Before installing, replace:
-#   number.navimow_global_cutting_height, lawn_mower.navimow, switch.navimow_mowing_schedule,
-#   sensor.navimow_schedule with your mower's entities (Navimow HA Pro names them after the mower)
+#   number.navimow_cutting_height, lawn_mower.navimow, switch.navimow_mowing_schedule_enabled,
+#   sensor.navimow_schedule with your mower's entities (navimow_pro names them after the mower;
+#   on Navimow HA Pro the first and third are ..._global_cutting_height and ..._mowing_schedule)
 #   notify.mobile_app_your_phone with your phone's notify service
 # Weather comes from Open-Meteo for your Home zone, so no location is stored here.
 #
@@ -43,14 +44,16 @@ template:
         icon: mdi:clock-start
         device_class: timestamp
         # Start of the mower's first mowing window today, or on the next day that has one,
-        # from its Navimow HA Pro schedule. 10:00 if the schedule has no windows.
+        # from its schedule sensor. 10:00 if the schedule has no windows. Matched on `day`
+        # (1 = Sunday … 7 = Saturday), which both integrations write; the weekday names differ
+        # (navimow_pro 'Sun', Navimow HA Pro 'Sunday').
         state: >-
           {%- set days = state_attr('sensor.navimow_schedule', 'days') or [] -%}
           {%- set ns = namespace(t=none) -%}
           {%- for k in range(0, 8) -%}
             {%- if ns.t is none -%}
               {%- set d = now() + timedelta(days=k) -%}
-              {%- set e = days | selectattr('weekday', 'eq', d.strftime('%A')) | selectattr('enabled') | list -%}
+              {%- set e = days | selectattr('day', 'eq', d.isoweekday() % 7 + 1) | selectattr('enabled') | list -%}
               {%- set starts = (e[0].periods | map(attribute='start_min') | list) if e else [] -%}
               {%- if starts -%}
                 {%- set t = d.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(minutes=starts | min) -%}
@@ -251,13 +254,13 @@ automation:
     actions:
       - variables:
           plan: "{{ state_attr('sensor.cut_height_plan', 'plan') }}"
-          height: "{{ states('number.navimow_global_cutting_height') | int }}"
+          height: "{{ states('number.navimow_cutting_height') | int }}"
           skipping: "{{ as_timestamp(states('input_datetime.cut_height_skip_until'), 0) > as_timestamp(now()) }}"
           new_height: "{{ plan.next if plan.next != height else 0 }}"
           lowering: "{{ 0 < new_height < height }}"
           covered: "{{ lowering and (states('input_number.cut_height_descent_to') | int) == plan.want }}"
           mowing: >
-            {% if plan.pause and is_state('switch.navimow_mowing_schedule', 'on') %}pause
+            {% if plan.pause and is_state('switch.navimow_mowing_schedule_enabled', 'on') %}pause
             {% elif not plan.pause and is_state('input_boolean.cut_height_paused_by_ha', 'on') %}resume
             {% else %}none{% endif %}
       - action: input_boolean.turn_off
@@ -361,7 +364,7 @@ automation:
         state: docked
       - variables:
           target: "{{ states('input_number.cut_height_pending_height') | int }}"
-          before: "{{ states('number.navimow_global_cutting_height') | int(0) }}"
+          before: "{{ states('number.navimow_cutting_height') | int(0) }}"
           mowing: "{{ states('input_select.cut_height_pending_mowing') }}"
       - if:
           - condition: template
@@ -369,14 +372,14 @@ automation:
         then:
           - action: number.set_value
             target:
-              entity_id: number.navimow_global_cutting_height
+              entity_id: number.navimow_cutting_height
             data:
               value: "{{ target }}"
-          # Navimow HA Pro shows a written value at once and holds it for up to 180 s
-          # while it waits for the cloud, even if the mower never takes it. So only
-          # read back after that window.
+          # The integration shows a written value at once, even if the mower never takes
+          # it: navimow_pro for about 30 s, Navimow HA Pro for up to 180 s. So only read
+          # back after that window.
           - delay: "00:04:00"
-          - wait_template: "{{ (states('number.navimow_global_cutting_height') | int(0)) == target }}"
+          - wait_template: "{{ (states('number.navimow_cutting_height') | int(0)) == target }}"
             timeout: "00:02:00"
           - if:
               - condition: template
@@ -386,7 +389,7 @@ automation:
                 data:
                   message: >-
                     Couldn't set the mower to {{ target }} mm: it still reports
-                    {{ states('number.navimow_global_cutting_height') }} mm. Set it in the Navimow app;
+                    {{ states('number.navimow_cutting_height') }} mm. Set it in the Navimow app;
                     the daily check will otherwise try again tomorrow.
             else:
               - if:
@@ -404,7 +407,7 @@ automation:
         then:
           - action: switch.turn_off
             target:
-              entity_id: switch.navimow_mowing_schedule
+              entity_id: switch.navimow_mowing_schedule_enabled
           - action: input_boolean.turn_on
             target:
               entity_id: input_boolean.cut_height_paused_by_ha
@@ -414,7 +417,7 @@ automation:
         then:
           - action: switch.turn_on
             target:
-              entity_id: switch.navimow_mowing_schedule
+              entity_id: switch.navimow_mowing_schedule_enabled
           - action: input_boolean.turn_off
             target:
               entity_id: input_boolean.cut_height_paused_by_ha

@@ -1,10 +1,10 @@
 # An entities card for the year-round cut height. Paste into a dashboard (Edit > Add card
-# > Manual). Replace number.navimow_global_cutting_height and switch.navimow_mowing_schedule
+# > Manual). Replace number.navimow_cutting_height and switch.navimow_mowing_schedule_enabled
 # with your mower's entities.
 type: entities
 title: Cut height
 entities:
-  - entity: number.navimow_global_cutting_height
+  - entity: number.navimow_cutting_height
     name: Mower height now
   - entity: sensor.cut_height_plan
     name: Planned height
@@ -19,7 +19,7 @@ entities:
     attribute: t7
     name: 7-day mean
     suffix: °C
-  - entity: switch.navimow_mowing_schedule
+  - entity: switch.navimow_mowing_schedule_enabled
     name: Mowing schedule
   - entity: input_number.cut_height_pending_height
     name: Pending height (0 = none)
