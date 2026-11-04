@@ -12,10 +12,12 @@ then does it itself.
 summer-only and decision-only: it worked out a height for hot spells and reminded you
 to set it in the Navimow app. Two things changed:
 
-- **Navimow HA Pro** (a third-party integration,
-  [ericallard3414-arch/navimow-ha-pro](https://github.com/ericallard3414-arch/navimow-ha-pro))
-  exposes the height as a number entity that Home Assistant can set. So the manual
-  step is gone.
+- Community integrations now expose the height as a number entity that Home Assistant
+  can set, so the manual step is gone. I use
+  [ilguala/navimow_pro](https://github.com/ilguala/navimow_pro) ("Navimow (Private)"),
+  the most actively maintained one, since 4 November 2026. Before that I used
+  [Navimow HA Pro](https://github.com/ericallard3414-arch/navimow-ha-pro), and the
+  package works with that too (see *Requirements*).
 - An automatic height has to be right in every season, not just in summer, so the
   rules were redone from the horticultural sources for autumn, winter, frost and spring.
   The research, with citations, is in
@@ -46,14 +48,13 @@ Everything keys off **T7**, the mean of the last 7 daily mean air temperatures.
 ## Ask, then apply
 
 - **An hour before the mower's first mowing window** of the day, the plan for the day is
-  fixed. The window is read from the mower's own schedule (`sensor.<mower>_schedule` from
-  Navimow HA Pro), so the timing follows any change you make in the app; with no windows
+  fixed. The window is read from the mower's own schedule (`sensor.<mower>_schedule`), so the timing follows any change you make in the app; with no windows
   it uses 10:00. If anything changes (a new height, or pausing or resuming the schedule)
   you get one phone notification with **Apply now** and **Skip 2 days**.
 - With no answer, it's applied **5 minutes before the window** if the mower is docked,
   otherwise at its next dock.
-- The height is read back from the mower 4 minutes later, after Navimow HA Pro's
-  optimistic display has expired, and you're told if it didn't take.
+- The height is read back from the mower 4 minutes later, after the integration has
+  stopped showing the value it just sent, and you're told if it didn't take.
 - A step-down (say 70 → 50 mm over 8 days) is asked about once, not at every step.
 - The schedule is only switched back on if this switched it off.
 
@@ -91,8 +92,9 @@ dry-spell rule needs. No location is stored in these files; the URL is built fro
 
 ## Setup
 
-1. Install Navimow HA Pro and check you have `number.<mower>_global_cutting_height`,
-   `lawn_mower.<mower>`, `switch.<mower>_mowing_schedule` and `sensor.<mower>_schedule`.
+1. Install [navimow_pro](https://github.com/ilguala/navimow_pro) (HACS custom repository)
+   and check you have `number.<mower>_cutting_height`, `lawn_mower.<mower>`,
+   `switch.<mower>_mowing_schedule_enabled` and `sensor.<mower>_schedule`.
 2. In `packages/cut_height_year_round.yaml` and `custom_templates/cut_height.jinja`,
    replace `navimow` in those entity IDs with your mower's name, and
    `notify.mobile_app_your_phone` with your notify service.
@@ -123,13 +125,17 @@ change still happens 5 minutes before the first mow. To hold changes without the
 ## Requirements
 
 - Home Assistant 2026.1 or newer.
-- Navimow HA Pro (public beta; uses Segway's unofficial cloud API as well as the official
-  one, so it can break if Segway changes it).
-- **X-series mowers with metric decks (e.g. X450):** Navimow HA Pro 0.9.0 sends the height
-  in a format these mowers misread, so most heights are ignored (and 80/85 mm land as
-  50/55). Fixed in [navimow-ha-pro#46](https://github.com/ericallard3414-arch/navimow-ha-pro/pull/46);
-  until that's released, apply its one-line change to the integration by hand. The read-back
-  above tells you when a height didn't take.
+- [ilguala/navimow_pro](https://github.com/ilguala/navimow_pro) 0.8.3 or newer. It's
+  unofficial and uses Segway's private app cloud, so it can break if Segway changes it.
+  Tested on an X450 ([navimow_pro#33](https://github.com/ilguala/navimow_pro/issues/33)):
+  height reads and writes work.
+- **Or Navimow HA Pro.** Rename two entities in the package, template and card:
+  `number.<mower>_global_cutting_height` and `switch.<mower>_mowing_schedule`. The schedule
+  match works with either. On **X-series mowers with metric decks (e.g. X450)**, HA Pro
+  0.9.0 sends the height in a format these mowers misread, so most heights are ignored
+  (and 80/85 mm land as 50/55). That's fixed in
+  [navimow-ha-pro#46](https://github.com/ericallard3414-arch/navimow-ha-pro/pull/46), not yet
+  released. The read-back tells you when a height didn't take.
 
 ## Licence
 
